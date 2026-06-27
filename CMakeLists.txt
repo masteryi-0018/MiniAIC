@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 4.0)
 message(STATUS "Default C++ compiler: ${CMAKE_CXX_COMPILER}")
 
 # 2. set cpp standard
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 message(STATUS "Default C++ standard: ${CMAKE_CXX_STANDARD}")
@@ -37,4 +37,5 @@ set(MINIAIC_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 include_directories("${MINIAIC_SOURCE_DIR}")
 
 # 2. subdirectory
+add_subdirectory(third_party/protobuf)
 add_subdirectory(miniaic)
