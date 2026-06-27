@@ -19,4 +19,11 @@ cmake -B build -S .
 cmake --build build
 ```
 
+## 第三方依赖
+
+| third_party | version     |
+| ----------- | ----------- |
+| protobuf    | 35.x        |
+| onnx        | ref-v1.22.0 |
+
 # 开发后
