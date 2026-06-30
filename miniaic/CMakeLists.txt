@@ -1,10 +1,22 @@
-file(GLOB MAIN_SRC "*.cc")
-file(GLOB PROTO_SRC "onnx/*.cc")
+# 1. environment
+# for miniaic/onnx/onnx.pb.cc to compile successfully, need to include the current source directory
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 
-set(PROTO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-include_directories("${PROTO_SOURCE_DIR}")
+# pybind need one static lib to produce a shared lib, so use a OBJECT to handle it
+set(LIB_TYPE OBJECT) # options: OBJECT, STATIC, SHARED
 
-add_executable(main ${MAIN_SRC} ${PROTO_SRC})
+# use interface library to manage compile options
+add_library(miniaic_compile_options INTERFACE)
 
-# should link protobuf library to main target, otherwise will get missing header error when compiling main.cc
-target_link_libraries(main PRIVATE protobuf::libprotobuf)
+# set strict compile options for the interface library
+target_compile_options(miniaic_compile_options INTERFACE
+    -Werror
+    -Wall
+    -Wextra
+    -Wpedantic
+)
+
+# 2. subdirectory
+add_subdirectory(frontend)
+add_subdirectory(ir)
+add_subdirectory(onnx)
