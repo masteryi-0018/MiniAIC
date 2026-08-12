@@ -8,6 +8,7 @@
 
 #include "miniaic/ir/graph.h"
 #include "miniaic/onnx/onnx.pb.h"
+#include "miniaic/opt/shape_inference.h"
 
 namespace {
 
@@ -82,9 +83,8 @@ std::vector<int> GetShapeFromValueInfo(const onnx::ValueInfoProto& info) {
     if (dim.has_dim_value()) {
       shape.push_back(static_cast<int>(dim.dim_value()));
     } else {
-      // 动态维度（只有 dim_param 没有 dim_value），无法确定 size，整体放弃 shape
-      shape.clear();
-      return shape;
+      // 动态维度（只有 dim_param）：按 1 处理（与 MiniNN Python 侧一致）
+      shape.push_back(1);
     }
   }
   return shape;
@@ -239,9 +239,33 @@ int main(int argc, char* argv[]) {
         continue;
       }
       auto it = known_shapes.find(out_name);
-      std::vector<int> shape =
-          it != known_shapes.end() ? it->second : std::vector<int>();
-      graph.add_tensor(shape, nullptr);
+      // 未知 shape 用 {-1} 标记（空 shape 表示标量），由 shape_inference 填充
+      std::vector<int> shape = {-1};
+      if (it != known_shapes.end() && !it->second.empty()) {
+        shape = it->second;
+      }
+      // Constant 节点的 value 属性（TENSOR）直接注册为输出 tensor（带 shape 和数据），
+      // 供 shape_inference 中的 Gather/Concat 等算子读取
+      const void* data = nullptr;
+      std::vector<float> const_data;
+      if (node_proto.op_type() == "Constant") {
+        for (int k = 0; k < node_proto.attribute_size(); ++k) {
+          const auto& attr = node_proto.attribute(k);
+          if (attr.type() == onnx::AttributeProto::TENSOR) {
+            const auto& value = attr.t();
+            shape.clear();
+            for (int d = 0; d < value.dims_size(); ++d) {
+              shape.push_back(static_cast<int>(value.dims(d)));
+            }
+            const_data = GetTensorData(value);
+            if (!const_data.empty()) {
+              data = const_data.data();
+            }
+            break;
+          }
+        }
+      }
+      graph.add_tensor(shape, data);
       tensor_map[out_name] = static_cast<int>(graph.get_tensors().size()) - 1;
     }
   }
@@ -318,6 +342,11 @@ int main(int argc, char* argv[]) {
     std::map<std::string, std::vector<int>> attrs;
     for (int j = 0; j < node_proto.attribute_size(); ++j) {
       const auto& attr = node_proto.attribute(j);
+      // Constant 的 value（TENSOR）已在注册 tensor 时处理，这里跳过
+      if (node_proto.op_type() == "Constant" &&
+          attr.type() == onnx::AttributeProto::TENSOR) {
+        continue;
+      }
       std::vector<int> values;
       switch (attr.type()) {
         case onnx::AttributeProto::INT:
@@ -349,7 +378,10 @@ int main(int argc, char* argv[]) {
     graph.add_node(node, inputs, outputs, attrs);
   }
 
-  // 4. 打印内部 IR Graph 的信息
+  // 4. 形状推断（图优化的第一步）
+  opt::shape_inference(graph);
+
+  // 5. 打印内部 IR Graph 的信息
   std::cout << "\n===== Internal IR Graph =====" << std::endl;
 
   std::cout << "Graph inputs (tensor indices): ";

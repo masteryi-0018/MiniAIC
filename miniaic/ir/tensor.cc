@@ -9,6 +9,7 @@
 Tensor::Tensor() {
   buffer_ = nullptr;
   size_ = 0;
+  has_data_ = false;
 }
 
 Tensor::~Tensor() {
@@ -19,14 +20,11 @@ Tensor::~Tensor() {
 }
 
 void Tensor::set_shape(std::vector<int>& shape) {
-  if (shape.data() == nullptr) {
-    // tensor: [1, 3, 224, 224]
-    // number: [1]
-    // shape_ = std::vector<int>(1, 1); // 对待空shape，初始化为一个1
-    // 不初始化shape_，看作标量
+  shape_ = shape;
+  // 空 shape 表示标量；[-1] 表示未知（由 shape_inference 填充），都按 1 个元素处理
+  if (shape.empty() || (shape.size() == 1 && shape[0] == -1)) {
     size_ = 1;
   } else {
-    shape_ = shape;
     size_ =
         std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
   }
@@ -45,6 +43,7 @@ void Tensor::set_data(std::vector<float>& data) {
     return;
   }
   std::memcpy(buffer_, data.data(), size_ * sizeof(float));
+  has_data_ = true;
 }
 
 // 返回局部变量不可以使用引用，否则会造成悬空引用
@@ -57,5 +56,8 @@ std::vector<float> Tensor::get_data() {
 void Tensor::set_rawdata(const void* data) {
   if (data != nullptr) {
     std::memcpy(buffer_, data, size_ * sizeof(float));
+    has_data_ = true;
   }
 }
+
+bool Tensor::has_data() const { return has_data_; }

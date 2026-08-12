@@ -26,6 +26,9 @@ class Tensor {
   // pybind
   std::vector<float> get_data();
 
+  // 是否持有有效数据（initializer / Constant / shape 推断产生）
+  bool has_data() const;
+
   // flatbuffers use const void*
   void set_rawdata(const void* data);
 
@@ -33,6 +36,7 @@ class Tensor {
   std::vector<int> shape_;
   void* buffer_;
   int size_;
+  bool has_data_;
 };
 
 #endif  // TENSOR_H

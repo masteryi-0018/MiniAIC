@@ -20,3 +20,4 @@ target_compile_options(miniaic_compile_options INTERFACE
 add_subdirectory(frontend)
 add_subdirectory(ir)
 add_subdirectory(onnx)
+add_subdirectory(opt)
