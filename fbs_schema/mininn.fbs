@@ -1,0 +1,43 @@
+// IDL file for mininn_fbs's schema
+
+namespace mininn_fbs;
+
+enum Op: byte {
+  ADD = 0,
+  CONV = 1,
+  CLIP = 2,
+  SHAPE = 3,
+  GATHER = 4,
+  UNSQUEEZE = 5,
+  CONCAT = 6,
+  GLOBALAVERAGEPOOL = 7,
+  RESHAPE = 8,
+  GEMM = 9,
+  CONSTANT = 10,
+}
+
+table Attribute {
+  key: string;
+  value: [int];
+}
+
+table Node {
+  type: Op;
+  attributes: [Attribute];
+  inputs: [int];
+  outputs: [int];
+}
+
+table Tensor {
+  shape: [int];
+  data: [ubyte];
+}
+
+table Graph {
+  nodes: [Node];
+  tensors: [Tensor];
+  inputs: [int];
+  outputs: [int];
+}
+
+root_type Graph;
