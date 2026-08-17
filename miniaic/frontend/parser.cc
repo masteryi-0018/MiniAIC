@@ -396,6 +396,14 @@ int main(int argc, char* argv[]) {
     gym_path += ".gynn";
   }
   serializer::save(graph, gym_path);
+  std::string json_path = gym_path;
+  if (json_path.size() > 5 &&
+      json_path.substr(json_path.size() - 5) == ".gynn") {
+    json_path = json_path.substr(0, json_path.size() - 5) + ".json";
+  } else {
+    json_path += ".json";
+  }
+  serializer::save_json(graph, json_path);
 
   // 6. 打印内部 IR Graph 的信息
   std::cout << "\n===== Internal IR Graph =====" << std::endl;

@@ -11,6 +11,10 @@ namespace serializer {
 // 返回 true 表示成功。
 bool save(Graph& graph, const std::string& path);
 
+// 将 IR graph 导出为 Netron 可打开的 Graph JSON（不含权重数据，含 shape）。
+// 返回 true 表示成功。
+bool save_json(Graph& graph, const std::string& path);
+
 }  // namespace serializer
 
 #endif  // SERIALIZER_H

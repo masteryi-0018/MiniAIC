@@ -28,6 +28,34 @@ int FindTensorIndex(Graph& graph, const std::shared_ptr<Tensor>& tensor) {
   return -1;
 }
 
+const char* OpToString(Op op) {
+  switch (op) {
+    case Op::ADD:
+      return "Add";
+    case Op::CONV:
+      return "Conv";
+    case Op::CLIP:
+      return "Clip";
+    case Op::SHAPE:
+      return "Shape";
+    case Op::GATHER:
+      return "Gather";
+    case Op::UNSQUEEZE:
+      return "Unsqueeze";
+    case Op::CONCAT:
+      return "Concat";
+    case Op::GLOBALAVERAGEPOOL:
+      return "GlobalAveragePool";
+    case Op::RESHAPE:
+      return "Reshape";
+    case Op::GEMM:
+      return "Gemm";
+    case Op::CONSTANT:
+      return "Constant";
+  }
+  return "Unknown";
+}
+
 }  // namespace
 
 bool save(Graph& graph, const std::string& path) {
@@ -110,6 +138,140 @@ bool save(Graph& graph, const std::string& path) {
             static_cast<std::streamsize>(builder.GetSize()));
   ofs.close();
   std::cout << "Graph serialized to " << path << std::endl;
+  return true;
+}
+
+// 输出 onnx ModelProto 的 camelCase JSON（Netron 对 .json 的 onnx 变体解析方式），
+// 不含权重数据，所有 tensor 带 shape（来自 shape inference）
+bool save_json(Graph& graph, const std::string& path) {
+  std::ofstream ofs(path);
+  if (!ofs) {
+    std::cerr << "Failed to open file: " << path << std::endl;
+    return false;
+  }
+
+  // tensor 名字 = 下标字符串
+  auto tensor_name = [](int index) { return std::to_string(index); };
+
+  // 输出 value info：{"name": .., "type": {"tensorType": {"elemType": 1, "shape": {"dim": [...]}}}}
+  auto print_value_info = [&](const std::vector<int>& tensors) {
+    for (size_t i = 0; i < tensors.size(); ++i) {
+      ofs << (i > 0 ? ", " : "")
+          << "{\"name\": \"" << tensor_name(tensors[i]) << "\", ";
+      ofs << "\"type\": {\"tensorType\": {\"elemType\": 1, ";
+      const std::vector<int>& shape =
+          graph.get_tensors()[tensors[i]]->get_shape();
+      ofs << "\"shape\": {\"dim\": [";
+      for (size_t j = 0; j < shape.size(); ++j) {
+        if (j > 0) {
+          ofs << ", ";
+        }
+        ofs << "{\"dimValue\": " << shape[j] << "}";
+      }
+      // ] 结束 dim 数组，4 个 } 依次闭合 shape / tensorType / type / value_info 对象
+      ofs << "]}}}}";
+    }
+  };
+
+  ofs << "{\n";
+  ofs << "  \"irVersion\": 6,\n";
+  ofs << "  \"producerName\": \"miniaic\",\n";
+  ofs << "  \"opsetImport\": [{\"domain\": \"\", \"version\": 10}],\n";
+  ofs << "  \"graph\": {\n";
+
+  // 1. nodes
+  ofs << "    \"node\": [\n";
+  std::vector<std::shared_ptr<Node>>& nodes = graph.get_nodes();
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    const auto& node = nodes[i];
+    ofs << "      {\"opType\": \"" << OpToString(node->get_op_type())
+        << "\", \"name\": \"" << i << "\", ";
+
+    // inputs：tensor 名（下标字符串）
+    ofs << "\"input\": [";
+    const auto& inputs = node->get_input_tensors();
+    for (size_t j = 0; j < inputs.size(); ++j) {
+      if (j > 0) {
+        ofs << ", ";
+      }
+      ofs << "\"" << tensor_name(FindTensorIndex(graph, inputs[j])) << "\"";
+    }
+    ofs << "], ";
+
+    // outputs
+    ofs << "\"output\": [";
+    const auto& outputs = node->get_output_tensors();
+    for (size_t j = 0; j < outputs.size(); ++j) {
+      if (j > 0) {
+        ofs << ", ";
+      }
+      ofs << "\"" << tensor_name(FindTensorIndex(graph, outputs[j])) << "\"";
+    }
+    ofs << "], ";
+
+    // attributes：单元素 -> i，多元素 -> ints（IR attrs 只存 int）
+    ofs << "\"attribute\": [";
+    const std::map<std::string, std::vector<int>>& attrs =
+        node->get_attributes();
+    size_t attr_count = 0;
+    for (const auto& kv : attrs) {
+      if (attr_count++ > 0) {
+        ofs << ", ";
+      }
+      ofs << "{\"name\": \"" << kv.first << "\", ";
+      if (kv.second.size() == 1) {
+        ofs << "\"i\": " << kv.second[0];
+      } else {
+        ofs << "\"ints\": [";
+        for (size_t j = 0; j < kv.second.size(); ++j) {
+          if (j > 0) {
+            ofs << ", ";
+          }
+          ofs << kv.second[j];
+        }
+        ofs << "]";
+      }
+      ofs << "}";
+    }
+    ofs << "]}";
+    if (i + 1 < nodes.size()) {
+      ofs << ",";
+    }
+    ofs << "\n";
+  }
+  ofs << "    ],\n";
+
+  // 2. graph inputs / outputs / valueInfo（全部带 shape）
+  ofs << "    \"input\": [";
+  print_value_info(graph.get_inputs());
+  ofs << "],\n";
+
+  ofs << "    \"output\": [";
+  print_value_info(graph.get_outputs());
+  ofs << "],\n";
+
+  // valueInfo：不在 input/output 里的所有 tensor（中间结果）
+  ofs << "    \"valueInfo\": [";
+  const std::vector<int>& graph_inputs = graph.get_inputs();
+  const std::vector<int>& graph_outputs = graph.get_outputs();
+  std::vector<int> intermediates;
+  for (int i = 0; i < static_cast<int>(graph.get_tensors().size()); ++i) {
+    const bool is_io =
+        std::find(graph_inputs.begin(), graph_inputs.end(), i) !=
+            graph_inputs.end() ||
+        std::find(graph_outputs.begin(), graph_outputs.end(), i) !=
+            graph_outputs.end();
+    if (!is_io) {
+      intermediates.push_back(i);
+    }
+  }
+  print_value_info(intermediates);
+  ofs << "]\n";
+
+  ofs << "  }\n";
+  ofs << "}\n";
+  ofs.close();
+  std::cout << "Graph dumped to " << path << " (ONNX JSON)" << std::endl;
   return true;
 }
 

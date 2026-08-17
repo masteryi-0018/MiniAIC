@@ -4,3 +4,4 @@ build
 # model
 *.onnx
 *.gynn
+*.json

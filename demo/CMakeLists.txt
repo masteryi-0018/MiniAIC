@@ -3,8 +3,8 @@ add_executable(demo ${DEMO_SRC})
 
 message(STATUS "Source files for demo binary: ${DEMO_SRC}")
 
-# MiniNN 头文件（写死路径）
-include_directories("/home/masteryi/work/MiniNN")
+# MiniNN 头文件（写死路径，MiniNN 安装产物）
+include_directories("/home/masteryi/work/MiniNN/build/install/include")
 include_directories("${MINIAIC_SOURCE_DIR}/third_party/flatbuffers/include")
 
 # MiniNN 静态库（写死路径，直接指向 MiniNN 构建产物）
