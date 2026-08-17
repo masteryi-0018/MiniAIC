@@ -343,11 +343,6 @@ int main(int argc, char* argv[]) {
     std::map<std::string, std::vector<int>> attrs;
     for (int j = 0; j < node_proto.attribute_size(); ++j) {
       const auto& attr = node_proto.attribute(j);
-      // Constant 的 value（TENSOR）已在注册 tensor 时处理，这里跳过
-      if (node_proto.op_type() == "Constant" &&
-          attr.type() == onnx::AttributeProto::TENSOR) {
-        continue;
-      }
       std::vector<int> values;
       switch (attr.type()) {
         case onnx::AttributeProto::INT:
@@ -367,6 +362,16 @@ int main(int argc, char* argv[]) {
             values.push_back(static_cast<int>(attr.floats(k)));
           }
           break;
+        case onnx::AttributeProto::TENSOR: {
+          // Constant 的 value 等：tensor 数据转成 int 数组存进 attrs，
+          // 供 MiniNN 的 constant kernel 读取
+          const auto& value = attr.t();
+          std::vector<float> data = GetTensorData(value);
+          for (float f : data) {
+            values.push_back(static_cast<int>(f));
+          }
+          break;
+        }
         default:
           std::cerr << "Unsupported attribute type: " << attr.type()
                     << " for attr: " << attr.name() << std::endl;

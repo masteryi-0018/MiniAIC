@@ -40,3 +40,4 @@ include_directories("${MINIAIC_SOURCE_DIR}/third_party/flatbuffers/include")
 # 2. subdirectory
 add_subdirectory(third_party/protobuf)
 add_subdirectory(miniaic)
+add_subdirectory(demo)
