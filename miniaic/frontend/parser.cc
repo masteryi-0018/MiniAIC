@@ -9,6 +9,7 @@
 #include "miniaic/ir/graph.h"
 #include "miniaic/onnx/onnx.pb.h"
 #include "miniaic/opt/shape_inference.h"
+#include "miniaic/serializer/serializer.h"
 
 namespace {
 
@@ -381,7 +382,17 @@ int main(int argc, char* argv[]) {
   // 4. 形状推断（图优化的第一步）
   opt::shape_inference(graph);
 
-  // 5. 打印内部 IR Graph 的信息
+  // 5. 序列化为 .gynn flatbuffer（与 MiniNN 格式一致）
+  std::string gym_path = model_path;
+  if (gym_path.size() > 5 &&
+      gym_path.substr(gym_path.size() - 5) == ".onnx") {
+    gym_path = gym_path.substr(0, gym_path.size() - 5) + ".gynn";
+  } else {
+    gym_path += ".gynn";
+  }
+  serializer::save(graph, gym_path);
+
+  // 6. 打印内部 IR Graph 的信息
   std::cout << "\n===== Internal IR Graph =====" << std::endl;
 
   std::cout << "Graph inputs (tensor indices): ";
