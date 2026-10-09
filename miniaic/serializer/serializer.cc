@@ -219,10 +219,12 @@ bool save_json(Graph& graph, const std::string& path) {
         ofs << ", ";
       }
       ofs << "{\"name\": \"" << kv.first << "\", ";
+      // 必须显式给 type：Netron 的 AttributeProto.f 默认就是 0，
+      // 若省略 type 会把单元素 int 属性误判成 FLOAT 并显示成 0
       if (kv.second.size() == 1) {
-        ofs << "\"i\": " << kv.second[0];
+        ofs << "\"type\": \"INT\", \"i\": " << kv.second[0];
       } else {
-        ofs << "\"ints\": [";
+        ofs << "\"type\": \"INTS\", \"ints\": [";
         for (size_t j = 0; j < kv.second.size(); ++j) {
           if (j > 0) {
             ofs << ", ";

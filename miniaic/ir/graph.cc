@@ -26,6 +26,16 @@ void Graph::add_node(std::shared_ptr<Node>& node, std::vector<int>& inputs,
 
 std::vector<std::shared_ptr<Node>>& Graph::get_nodes() { return nodes_; }
 
+void Graph::remove_node(const std::shared_ptr<Node>& node) {
+  for (auto it = nodes_.begin(); it != nodes_.end(); ++it) {
+    if (*it == node) {
+      nodes_.erase(it);
+      return;
+    }
+  }
+  return;
+}
+
 void Graph::add_tensor(std::vector<int>& shape, const void* data) {
   auto tensor = std::make_shared<Tensor>();
   tensors_.emplace_back(tensor);

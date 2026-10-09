@@ -16,6 +16,9 @@ class Graph {
                 std::vector<int>& outputs,
                 std::map<std::string, std::vector<int>>& attrs);
 
+  // 移除节点（图优化用）；tensor 不回收，保证 tensor 下标稳定
+  void remove_node(const std::shared_ptr<Node>& node);
+
   std::vector<std::shared_ptr<Node>>& get_nodes();
 
   void add_tensor(std::vector<int>& shape, const void* data);
