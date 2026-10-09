@@ -402,13 +402,16 @@ bool InferNode(const std::shared_ptr<Node>& node) {
 
 }  // namespace
 
-bool shape_inference(Graph& graph) {
-  bool changed = false;
+PassResult shape_inference(Graph& graph) {
+  PassResult result;
   // onnx 的 node 顺序即为拓扑序，单遍即可
   for (const auto& node : graph.get_nodes()) {
-    changed |= InferNode(node);
+    if (InferNode(node)) {
+      result.changed = true;
+      ++result.count;
+    }
   }
-  return changed;
+  return result;
 }
 
 }  // namespace opt

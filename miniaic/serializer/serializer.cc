@@ -17,6 +17,18 @@
 namespace serializer {
 namespace {
 
+// 序列化前的前置条件：所有 tensor 的 shape 必须已知。
+// [-1] 是 shape_inference 留下的未知标记，MiniNN 会按 size=-1 分配内存。
+bool HasUnknownShape(Graph& graph) {
+  for (const auto& tensor : graph.get_tensors()) {
+    const std::vector<int>& shape = tensor->get_shape();
+    if (shape.size() == 1 && shape[0] == -1) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // 在 graph 的 tensor 列表中查找 tensor 的下标（按指针比较）
 int FindTensorIndex(Graph& graph, const std::shared_ptr<Tensor>& tensor) {
   std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
@@ -59,6 +71,13 @@ const char* OpToString(Op op) {
 }  // namespace
 
 bool save(Graph& graph, const std::string& path) {
+  if (HasUnknownShape(graph)) {
+    std::cerr << "Refuse to serialize: some tensors still have unknown shape "
+                 "([-1]); shape inference must run before serialization"
+              << std::endl;
+    return false;
+  }
+
   flatbuffers::FlatBufferBuilder builder;
 
   // 1. tensors：shape 为 int32 数组，data 为 float32 原始字节
