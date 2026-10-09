@@ -8,7 +8,10 @@
 
 #include "miniaic/ir/graph.h"
 #include "miniaic/onnx/onnx.pb.h"
-#include "miniaic/opt/pipeline.h"
+#include "miniaic/opt/constant_folding.h"
+#include "miniaic/opt/dce.h"
+#include "miniaic/opt/fuse_conv_clip.h"
+#include "miniaic/opt/shape_inference.h"
 #include "miniaic/serializer/serializer.h"
 
 namespace {
@@ -144,33 +147,6 @@ std::vector<float> GetTensorData(const onnx::TensorProto& tensor) {
   return data;
 }
 
-// 去掉扩展名，用于生成输出文件路径
-std::string StripExtension(const std::string& path) {
-  const size_t dot = path.find_last_of('.');
-  const size_t slash = path.find_last_of('/');
-  if (dot == std::string::npos ||
-      (slash != std::string::npos && dot < slash)) {
-    return path;
-  }
-  return path.substr(0, dot);
-}
-
-// 按分隔符切分
-std::vector<std::string> Split(const std::string& text, char sep) {
-  std::vector<std::string> parts;
-  size_t begin = 0;
-  while (begin <= text.size()) {
-    const size_t end = text.find(sep, begin);
-    if (end == std::string::npos) {
-      parts.push_back(text.substr(begin));
-      break;
-    }
-    parts.push_back(text.substr(begin, end - begin));
-    begin = end + 1;
-  }
-  return parts;
-}
-
 // 在 graph 的 tensor 列表中找到某个 tensor 的下标（按指针比较）。
 int FindTensorIndex(Graph& graph, const std::shared_ptr<Tensor>& tensor) {
   std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
@@ -186,20 +162,7 @@ int FindTensorIndex(Graph& graph, const std::shared_ptr<Tensor>& tensor) {
 
 int main(int argc, char* argv[]) {
   // 1. 读取整个 .onnx 文件到 string
-  // 用法: main [model.onnx] [--passes=a,b] [--dump-passes]
-  std::string model_path = "models/add_model.onnx";
-  std::vector<std::string> only_passes;
-  bool dump_passes = false;
-  for (int i = 1; i < argc; ++i) {
-    const std::string arg = argv[i];
-    if (arg.rfind("--passes=", 0) == 0) {
-      only_passes = Split(arg.substr(9), ',');
-    } else if (arg == "--dump-passes") {
-      dump_passes = true;
-    } else {
-      model_path = arg;
-    }
-  }
+  std::string model_path = argc > 1 ? argv[1] : "models/add_model.onnx";
   std::ifstream ifs(model_path, std::ios::binary);
   if (!ifs) {
     std::cerr << "Failed to open " << model_path << std::endl;
@@ -424,23 +387,12 @@ int main(int argc, char* argv[]) {
     graph.add_node(node, inputs, outputs, attrs);
   }
 
-  // 4. 图优化：pass 管线（注册顺序见 opt/pipeline.cc）
-  opt::PassManager passes = opt::build_default_pipeline();
-  if (!only_passes.empty() && !passes.set_enabled(only_passes)) {
-    return -1;
-  }
-  // dump 路径基准：必须声明在 if 之外，lambda 按引用捕获后要活到 run 结束
-  const std::string dump_base = StripExtension(model_path);
-  opt::DumpCallback dump_callback;
-  if (dump_passes) {
-    // 每个 pass 前后各 dump 一份 Netron JSON，便于定位是哪个 pass 改动了图
-    dump_callback = [&dump_base](Graph& graph, const std::string& tag) {
-      serializer::save_json(graph, dump_base + "." + tag + ".json");
-    };
-  }
-  if (!passes.run(graph, dump_callback)) {
-    return -1;
-  }
+  // 4. 图优化：pass 顺序即依赖顺序
+  std::cout << "===== Graph Optimization =====" << std::endl;
+  opt::shape_inference(graph);   // shape 是后续 pass 的前提
+  opt::constant_folding(graph);  // 常量折叠
+  opt::fuse_conv_clip(graph);    // Conv + Clip 融合
+  opt::dce(graph);               // 回收死节点/死张量
 
   // 5. 序列化为 .gynn flatbuffer（与 MiniNN 格式一致）
   bool serialized = true;

@@ -2,7 +2,6 @@
 #define FUSE_CONV_CLIP_H
 
 #include "miniaic/ir/graph.h"
-#include "miniaic/opt/pass.h"
 
 namespace opt {
 
@@ -14,8 +13,8 @@ namespace opt {
 //   2. 该 Conv 输出只被这一个 Clip 消费（否则不能重连）
 //   3. 该 Conv 输出本身不是 graph 输出
 //   4. Clip 同时有非空的 min 和 max
-// 返回 count = 融合掉的 Conv+Clip 对数。
-PassResult fuse_conv_clip(Graph& graph);
+// 返回 true 表示图发生了变化。
+bool fuse_conv_clip(Graph& graph);
 
 }  // namespace opt
 

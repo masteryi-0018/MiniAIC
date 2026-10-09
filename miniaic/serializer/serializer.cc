@@ -17,16 +17,71 @@
 namespace serializer {
 namespace {
 
-// 序列化前的前置条件：所有 tensor 的 shape 必须已知。
-// [-1] 是 shape_inference 留下的未知标记，MiniNN 会按 size=-1 分配内存。
-bool HasUnknownShape(Graph& graph) {
-  for (const auto& tensor : graph.get_tensors()) {
+// 导出前校验：
+//   1. 所有 tensor 的 shape 必须已知（[-1] 是 shape_inference 留下的标记，
+//      mininn 会按 size=-1 分配内存）
+//   2. 节点引用的 tensor 都属于 graph，且每个节点有输出
+//   3. graph 输入输出下标合法，graph 输出必须有生产者
+// 校验不通过就拒绝导出，避免生成 mininn 无法正确运行的模型。
+bool ValidateForExport(Graph& graph) {
+  std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
+  std::set<const Tensor*> known;
+  for (const auto& tensor : tensors) {
+    known.insert(tensor.get());
     const std::vector<int>& shape = tensor->get_shape();
     if (shape.size() == 1 && shape[0] == -1) {
-      return true;
+      std::cerr << "Validation failed: tensor has unknown shape [-1]"
+                << std::endl;
+      return false;
     }
   }
-  return false;
+
+  std::set<const Tensor*> produced;
+  for (const auto& node : graph.get_nodes()) {
+    if (node->get_output_tensors().empty()) {
+      std::cerr << "Validation failed: node without output tensor" << std::endl;
+      return false;
+    }
+    for (const auto& tensor : node->get_input_tensors()) {
+      if (tensor == nullptr || known.count(tensor.get()) == 0) {
+        std::cerr << "Validation failed: node input not in graph" << std::endl;
+        return false;
+      }
+    }
+    for (const auto& tensor : node->get_output_tensors()) {
+      if (tensor == nullptr || known.count(tensor.get()) == 0) {
+        std::cerr << "Validation failed: node output not in graph"
+                  << std::endl;
+        return false;
+      }
+      produced.insert(tensor.get());
+    }
+  }
+
+  const int num_tensors = static_cast<int>(tensors.size());
+  std::set<int> graph_inputs;
+  for (int index : graph.get_inputs()) {
+    if (index < 0 || index >= num_tensors) {
+      std::cerr << "Validation failed: invalid graph input index " << index
+                << std::endl;
+      return false;
+    }
+    graph_inputs.insert(index);
+  }
+  for (int index : graph.get_outputs()) {
+    if (index < 0 || index >= num_tensors) {
+      std::cerr << "Validation failed: invalid graph output index " << index
+                << std::endl;
+      return false;
+    }
+    if (graph_inputs.count(index) == 0 &&
+        produced.count(tensors[index].get()) == 0) {
+      std::cerr << "Validation failed: graph output " << index
+                << " has no producer" << std::endl;
+      return false;
+    }
+  }
+  return true;
 }
 
 // 在 graph 的 tensor 列表中查找 tensor 的下标（按指针比较）
@@ -71,10 +126,8 @@ const char* OpToString(Op op) {
 }  // namespace
 
 bool save(Graph& graph, const std::string& path) {
-  if (HasUnknownShape(graph)) {
-    std::cerr << "Refuse to serialize: some tensors still have unknown shape "
-                 "([-1]); shape inference must run before serialization"
-              << std::endl;
+  if (!ValidateForExport(graph)) {
+    std::cerr << "Refuse to serialize " << path << std::endl;
     return false;
   }
 

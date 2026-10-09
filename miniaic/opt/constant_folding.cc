@@ -1,5 +1,6 @@
 #include "miniaic/opt/constant_folding.h"
 
+#include <iostream>
 #include <map>
 #include <memory>
 #include <set>
@@ -12,6 +13,9 @@
 
 namespace opt {
 namespace {
+
+// 迭代上限，避免异常情况下反复折叠
+constexpr int kMaxIterations = 10;
 
 // shape 未知（shape_inference 留下的标记）
 bool ShapeUnknown(const std::vector<int>& shape) {
@@ -41,12 +45,7 @@ std::vector<float> ReadData(const std::shared_ptr<Tensor>& tensor) {
   return tensor->get_data();
 }
 
-// Shape：输出 = 输入 shape 的各维
-std::vector<float> EvalShape(const std::vector<int>& input_shape) {
-  return std::vector<float>(input_shape.begin(), input_shape.end());
-}
-
-// Add：逐元素相加（要求两个输入形状完全一致，与 mininn 的 add kernel 一致）
+// Add：逐元素相加（要求形状一致，与 mininn 的 add kernel 一致）
 bool EvalAdd(const std::vector<float>& a, const std::vector<float>& b,
              std::vector<float>* out) {
   if (a.size() != b.size()) {
@@ -55,22 +54,6 @@ bool EvalAdd(const std::vector<float>& a, const std::vector<float>& b,
   out->resize(a.size());
   for (size_t i = 0; i < a.size(); ++i) {
     (*out)[i] = a[i] + b[i];
-  }
-  return true;
-}
-
-// Clip：按 [min, max] 截断（边界来自属性，与 mininn 的 clip kernel 一致）
-bool EvalClip(const std::vector<float>& data, int min_value, int max_value,
-              std::vector<float>* out) {
-  out->resize(data.size());
-  for (size_t i = 0; i < data.size(); ++i) {
-    if (data[i] > max_value) {
-      (*out)[i] = static_cast<float>(max_value);
-    } else if (data[i] < min_value) {
-      (*out)[i] = static_cast<float>(min_value);
-    } else {
-      (*out)[i] = data[i];
-    }
   }
   return true;
 }
@@ -98,16 +81,14 @@ bool EvalConcat(const std::vector<std::vector<float>>& datas,
     inner *= shapes[0][i];
   }
   for (size_t k = 0; k < datas.size(); ++k) {
-    if (shapes[k].size() != shapes[0].size()) {
+    if (shapes[k].size() != shapes[0].size() ||
+        static_cast<int>(datas[k].size()) != NumElements(shapes[k])) {
       return false;
     }
     for (int i = 0; i < rank; ++i) {
       if (i != axis && shapes[k][i] != shapes[0][i]) {
         return false;
       }
-    }
-    if (static_cast<int>(datas[k].size()) != NumElements(shapes[k])) {
-      return false;
     }
   }
   out->clear();
@@ -131,8 +112,8 @@ bool EvalGather(const std::vector<float>& data,
   if (axis < 0) {
     axis += rank;
   }
-  if (axis < 0 || axis >= rank || static_cast<int>(data.size()) !=
-                                      NumElements(data_shape)) {
+  if (axis < 0 || axis >= rank ||
+      static_cast<int>(data.size()) != NumElements(data_shape)) {
     return false;
   }
   int axis_stride = 1;
@@ -155,7 +136,8 @@ bool EvalGather(const std::vector<float>& data,
       if (idx < 0 || idx >= data_shape[axis]) {
         return false;
       }
-      const size_t begin = static_cast<size_t>(o) * in_stride + idx * axis_stride;
+      const size_t begin =
+          static_cast<size_t>(o) * in_stride + idx * axis_stride;
       out->insert(out->end(), data.begin() + begin,
                   data.begin() + begin + axis_stride);
     }
@@ -163,20 +145,15 @@ bool EvalGather(const std::vector<float>& data,
   return true;
 }
 
-// 按算子求值；成功返回 true 并填充 out
+// 按算子求值，成功返回 true 并填充 out
 bool EvalNode(const std::shared_ptr<Node>& node, std::vector<float>* out) {
   const Op op = node->get_op_type();
   const std::vector<std::shared_ptr<Tensor>>& in = node->get_input_tensors();
   const std::map<std::string, std::vector<int>>& attrs = node->get_attributes();
   switch (op) {
     case Op::ADD:
-      return in.size() == 2 &&
-             in[0]->get_shape() == in[1]->get_shape() &&
+      return in.size() == 2 && in[0]->get_shape() == in[1]->get_shape() &&
              EvalAdd(ReadData(in[0]), ReadData(in[1]), out);
-    case Op::CLIP:
-      return !in.empty() &&
-             EvalClip(ReadData(in[0]), GetAttrInt(attrs, "min", 0),
-                      GetAttrInt(attrs, "max", 0), out);
     case Op::CONCAT: {
       std::vector<std::vector<float>> datas;
       std::vector<std::vector<int>> shapes;
@@ -203,17 +180,10 @@ bool EvalNode(const std::shared_ptr<Node>& node, std::vector<float>* out) {
   }
 }
 
-}  // namespace
-
-PassResult constant_folding(Graph& graph) {
+// 单遍扫描：折叠本轮所有可折叠的节点，返回折叠个数
+int FoldOnce(Graph& graph) {
   std::vector<std::shared_ptr<Node>>& nodes = graph.get_nodes();
   std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
-
-  // tensor -> 下标
-  std::map<const Tensor*, int> index_of;
-  for (size_t i = 0; i < tensors.size(); ++i) {
-    index_of[tensors[i].get()] = static_cast<int>(i);
-  }
 
   // 常量张量集合：initializer（有数据且没有生产者节点）+ Constant 节点的输出
   std::set<const Tensor*> produced;
@@ -240,20 +210,25 @@ PassResult constant_folding(Graph& graph) {
   for (int index : graph.get_outputs()) {
     graph_outputs.insert(index);
   }
+  std::map<const Tensor*, int> index_of;
+  for (size_t i = 0; i < tensors.size(); ++i) {
+    index_of[tensors[i].get()] = static_cast<int>(i);
+  }
 
-  PassResult result;
+  int folded_count = 0;
   std::vector<std::shared_ptr<Node>> folded;
+  // node 顺序即拓扑序，正向扫描即可让上一步的常量被下一步用到
   for (const auto& node : nodes) {
     const Op op = node->get_op_type();
     if (op == Op::CONSTANT) {
-      continue;  // 常量生产者本身不需要折叠（无人使用由 DCE 处理）
+      continue;  // 常量生产者本身不折叠（无人使用时交给 DCE）
     }
     const std::vector<std::shared_ptr<Tensor>>& in = node->get_input_tensors();
     const std::vector<std::shared_ptr<Tensor>>& out = node->get_output_tensors();
     if (in.empty() || out.size() != 1) {
-      continue;  // 只折叠单输出算子
+      continue;
     }
-    // 输出是 graph 输出时保留其生产者，维持"graph 输出必有生产者"
+    // 输出是 graph 输出时保留其生产者
     if (graph_outputs.count(index_of[out[0].get()]) > 0) {
       continue;
     }
@@ -264,7 +239,7 @@ PassResult constant_folding(Graph& graph) {
       // 只依赖输入的静态 shape：输入是运行时张量也可折叠
       const std::vector<int>& shape = in[0]->get_shape();
       if (!shape.empty() && !ShapeUnknown(shape)) {
-        data = EvalShape(shape);
+        data.assign(shape.begin(), shape.end());
         foldable = true;
       }
     } else {
@@ -276,11 +251,8 @@ PassResult constant_folding(Graph& graph) {
       }
       foldable = all_constant && EvalNode(node, &data);
     }
-    if (!foldable) {
-      continue;
-    }
-    // 数据尺寸必须与输出张量一致（形状未知时尺寸也是 1，会在此被挡掉）
-    if (out[0]->get_size() != static_cast<int>(data.size())) {
+    // 数据尺寸必须与输出张量一致（形状未知时尺寸为 1，会在此被挡掉）
+    if (!foldable || out[0]->get_size() != static_cast<int>(data.size())) {
       continue;
     }
 
@@ -288,14 +260,31 @@ PassResult constant_folding(Graph& graph) {
     out[0]->set_data(value);
     constant.insert(out[0].get());
     folded.push_back(node);
-    ++result.count;
+    ++folded_count;
   }
 
   for (const auto& node : folded) {
     graph.remove_node(node);
   }
-  result.changed = result.count > 0;
-  return result;
+  return folded_count;
+}
+
+}  // namespace
+
+bool constant_folding(Graph& graph) {
+  int total = 0;
+  for (int iteration = 0; iteration < kMaxIterations; ++iteration) {
+    const int folded = FoldOnce(graph);
+    if (folded == 0) {
+      break;
+    }
+    total += folded;
+  }
+  if (total > 0) {
+    std::cout << "Constant folding: " << total << " node(s) folded"
+              << std::endl;
+  }
+  return total > 0;
 }
 
 }  // namespace opt

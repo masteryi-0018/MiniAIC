@@ -1,5 +1,6 @@
 #include "miniaic/opt/dce.h"
 
+#include <iostream>
 #include <map>
 #include <memory>
 #include <set>
@@ -10,8 +11,19 @@
 #include "miniaic/ir/type.h"
 
 namespace opt {
+namespace {
 
-PassResult dce(Graph& graph) {
+int NumElements(const std::vector<int>& shape) {
+  int size = 1;
+  for (int dim : shape) {
+    size *= dim;
+  }
+  return size;
+}
+
+}  // namespace
+
+bool dce(Graph& graph) {
   std::vector<std::shared_ptr<Node>>& nodes = graph.get_nodes();
   std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
 
@@ -60,8 +72,7 @@ PassResult dce(Graph& graph) {
     keep.insert(tensors[index].get());
   }
 
-  // 删除不活跃节点（先收集完毕再删，避免迭代中失效）
-  PassResult result;
+  // 删除不活跃节点
   std::vector<std::shared_ptr<Node>> dead_nodes;
   for (size_t i = 0; i < nodes.size(); ++i) {
     if (live_nodes.count(static_cast<int>(i)) == 0) {
@@ -71,18 +82,22 @@ PassResult dce(Graph& graph) {
   for (const auto& node : dead_nodes) {
     graph.remove_node(node);
   }
-  result.count += static_cast<int>(dead_nodes.size());
 
-  // 回收死张量并重排下标
+  // 回收死张量并重排下标，同时统计释放的 buffer 大小
   std::vector<std::shared_ptr<Tensor>> kept;
   std::vector<int> old_to_new(tensors.size(), -1);
+  size_t freed_bytes = 0;
   for (size_t i = 0; i < tensors.size(); ++i) {
     if (keep.count(tensors[i].get()) > 0) {
       old_to_new[i] = static_cast<int>(kept.size());
       kept.push_back(tensors[i]);
+    } else {
+      freed_bytes += static_cast<size_t>(NumElements(tensors[i]->get_shape())) *
+                     sizeof(float);
     }
   }
-  result.count += static_cast<int>(tensors.size() - kept.size());
+  const int removed_tensors = static_cast<int>(tensors.size() - kept.size());
+  const int removed_nodes = static_cast<int>(dead_nodes.size());
 
   std::vector<int> new_inputs;
   for (int index : graph.get_inputs()) {
@@ -92,12 +107,16 @@ PassResult dce(Graph& graph) {
   for (int index : graph.get_outputs()) {
     new_outputs.push_back(old_to_new[index]);
   }
-  tensors = kept;  // tensors 引用 graph 内部 vector
+  tensors = kept;  // tensors 是 graph 内部 vector 的引用
   graph.set_inputs(new_inputs);
   graph.set_outputs(new_outputs);
 
-  result.changed = result.count > 0;
-  return result;
+  if (removed_nodes + removed_tensors > 0) {
+    std::cout << "DCE: removed " << removed_nodes << " node(s), "
+              << removed_tensors << " tensor(s), freed " << freed_bytes / 1024
+              << " KB" << std::endl;
+  }
+  return removed_nodes + removed_tensors > 0;
 }
 
 }  // namespace opt

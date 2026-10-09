@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <vector>
@@ -402,16 +403,19 @@ bool InferNode(const std::shared_ptr<Node>& node) {
 
 }  // namespace
 
-PassResult shape_inference(Graph& graph) {
-  PassResult result;
+bool shape_inference(Graph& graph) {
+  int updated = 0;
   // onnx 的 node 顺序即为拓扑序，单遍即可
   for (const auto& node : graph.get_nodes()) {
     if (InferNode(node)) {
-      result.changed = true;
-      ++result.count;
+      ++updated;
     }
   }
-  return result;
+  if (updated > 0) {
+    std::cout << "Shape inference: " << updated << " node(s) updated"
+              << std::endl;
+  }
+  return updated > 0;
 }
 
 }  // namespace opt

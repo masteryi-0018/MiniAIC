@@ -1,5 +1,6 @@
 #include "miniaic/opt/fuse_conv_clip.h"
 
+#include <iostream>
 #include <map>
 #include <memory>
 #include <set>
@@ -26,9 +27,10 @@ int FindTensorIndex(const std::vector<std::shared_ptr<Tensor>>& tensors,
 
 }  // namespace
 
-PassResult fuse_conv_clip(Graph& graph) {
+bool fuse_conv_clip(Graph& graph) {
   std::vector<std::shared_ptr<Node>>& nodes = graph.get_nodes();
   std::vector<std::shared_ptr<Tensor>>& tensors = graph.get_tensors();
+  const size_t nodes_before = nodes.size();
 
   // tensor 下标 -> 生产它的节点下标 / 消费它的节点下标列表
   std::map<int, int> producer;
@@ -105,7 +107,11 @@ PassResult fuse_conv_clip(Graph& graph) {
   for (const auto& node : fused_nodes) {
     graph.remove_node(node);
   }
-  return PassResult{fused > 0, fused};
+  if (fused > 0) {
+    std::cout << "Fused Conv+Clip: " << fused << " (nodes " << nodes_before
+              << " -> " << nodes.size() << ")" << std::endl;
+  }
+  return fused > 0;
 }
 
 }  // namespace opt
