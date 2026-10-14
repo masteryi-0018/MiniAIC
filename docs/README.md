@@ -25,5 +25,6 @@ cmake --build build
 | ----------- | ----------- |
 | protobuf    | 35.x        |
 | onnx        | ref-v1.22.0 |
+| flatbuffers | v25.9.23    |
 
 # 开发后

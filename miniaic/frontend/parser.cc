@@ -162,7 +162,17 @@ int FindTensorIndex(Graph& graph, const std::shared_ptr<Tensor>& tensor) {
 
 int main(int argc, char* argv[]) {
   // 1. 读取整个 .onnx 文件到 string
-  std::string model_path = argc > 1 ? argv[1] : "models/add_model.onnx";
+  // 用法: main [model.onnx] [--no-opt]
+  bool optimize = true;
+  std::string model_path = "models/add_model.onnx";
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--no-opt") {
+      optimize = false;
+    } else {
+      model_path = arg;
+    }
+  }
   std::ifstream ifs(model_path, std::ios::binary);
   if (!ifs) {
     std::cerr << "Failed to open " << model_path << std::endl;
@@ -389,10 +399,12 @@ int main(int argc, char* argv[]) {
 
   // 4. 图优化：pass 顺序即依赖顺序
   std::cout << "===== Graph Optimization =====" << std::endl;
-  opt::shape_inference(graph);   // shape 是后续 pass 的前提
-  opt::constant_folding(graph);  // 常量折叠
-  opt::fuse_conv_clip(graph);    // Conv + Clip 融合
-  opt::dce(graph);               // 回收死节点/死张量
+  opt::shape_inference(graph);  // 必需：后续 pass 与导出都依赖 shape
+  if (optimize) {
+    opt::constant_folding(graph);  // 常量折叠
+    opt::fuse_conv_clip(graph);    // Conv + Clip 融合
+    opt::dce(graph);               // 回收死节点/死张量
+  }
 
   // 5. 序列化为 .gynn flatbuffer（与 MiniNN 格式一致）
   bool serialized = true;
